@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.1](https://github.com/googleapis/mcp-toolbox/compare/v1.7.0...v1.7.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* Add name validation to tools name ([#3654](https://github.com/googleapis/mcp-toolbox/issues/3654)) ([944f6ce](https://github.com/googleapis/mcp-toolbox/commit/944f6ce97bc77a92a052de92b88f0fc09ac7578c))
+* **server:** Sort default toolset alphabetically for stable ordering ([#3539](https://github.com/googleapis/mcp-toolbox/issues/3539)) ([e5da24c](https://github.com/googleapis/mcp-toolbox/commit/e5da24c5dfd2208c7e947a20e58a2e2c82236241))
+* **source/cloud-sql-admin:** Validate source instance for backup-run restore ([#3555](https://github.com/googleapis/mcp-toolbox/issues/3555)) ([3ebe500](https://github.com/googleapis/mcp-toolbox/commit/3ebe500ef7b27608464e891c7458df630ea4aab6))
+* **source/dataplex:** Cleanup Dataplex Data Product resources that may have leaked due to previously aborted tests ([#3627](https://github.com/googleapis/mcp-toolbox/issues/3627)) ([3fb5a3f](https://github.com/googleapis/mcp-toolbox/commit/3fb5a3f2cdf42cbd078720df3369dbc33788c6b1))
+* **source/http:** Block CGNAT 100.64.0.0/10 in default SSRF guard ([#3625](https://github.com/googleapis/mcp-toolbox/issues/3625)) ([a0f36f4](https://github.com/googleapis/mcp-toolbox/commit/a0f36f42c33df52727e934549e7d6ca7576fe9ac))
+* **tools/looker:** Log request/response traces at debug, not error ([#3552](https://github.com/googleapis/mcp-toolbox/issues/3552)) ([c3ad445](https://github.com/googleapis/mcp-toolbox/commit/c3ad4451e8592606ce686d042623f9aa8142317f))
+
 ## [1.7.0](https://github.com/googleapis/mcp-toolbox/compare/v1.6.0...v1.7.0) (2026-07-16)
 
 
