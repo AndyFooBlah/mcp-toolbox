@@ -427,6 +427,8 @@ func toolsCallHandler(ctx context.Context, id jsonrpc.RequestId, g group.Group, 
 			return jsonrpc.NewError(id, jsonrpc.INTERNAL_ERROR, err.Error(), nil), err
 		}
 	}
+	results, truncation := tools.CapResult(results, tool.GetMaxRows(), tool.GetMaxResponseBytes())
+
 	content := make([]TextContent, 0)
 
 	sliceRes, ok := results.([]any)
@@ -443,6 +445,12 @@ func toolsCallHandler(ctx context.Context, id jsonrpc.RequestId, g group.Group, 
 			text.Text = string(dM)
 		}
 		content = append(content, text)
+	}
+
+	if truncation != nil {
+		if noticeJSON, err := json.Marshal(map[string]*tools.Truncation{"truncation": truncation}); err == nil {
+			content = append(content, TextContent{Type: "text", Text: string(noticeJSON)})
+		}
 	}
 
 	return jsonrpc.JSONRPCResponse{
