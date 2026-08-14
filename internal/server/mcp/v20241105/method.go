@@ -428,7 +428,7 @@ func toolsCallHandler(ctx context.Context, id jsonrpc.RequestId, g group.Group, 
 		}
 	}
 
-	results, truncation := tools.CapResult(results, tool.GetMaxRows(), tool.GetMaxResponseBytes())
+	results, truncation := tools.CapResultForTool(ctx, tool, results)
 
 	content := make([]TextContent, 0)
 
