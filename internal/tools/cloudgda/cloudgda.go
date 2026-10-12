@@ -221,8 +221,8 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 // metadata (MCP `_meta`) for the calling application instead of being placed
 // in the content the model reads.
 const (
-	MetaKeyTokenUsage        = "geminidataanalytics.googleapis.com/tokenUsage"
-	MetaKeyPipelineDebugInfo = "geminidataanalytics.googleapis.com/pipelineDebugInfo"
+	MetaKeyTokenUsage        = "com.google.cloud.geminidataanalytics/tokenUsage"
+	MetaKeyPipelineDebugInfo = "com.google.cloud.geminidataanalytics/pipelineDebugInfo"
 )
 
 func splitResponseMeta(resp *geminidataanalyticspb.QueryDataResponse) any {
