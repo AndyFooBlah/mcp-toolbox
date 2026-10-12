@@ -427,6 +427,7 @@ func toolsCallHandler(ctx context.Context, id jsonrpc.RequestId, g group.Group, 
 			return jsonrpc.NewError(id, jsonrpc.INTERNAL_ERROR, err.Error(), nil), err
 		}
 	}
+	results, resultMeta := tools.SplitResultMeta(results)
 	content := make([]TextContent, 0)
 
 	sliceRes, ok := results.([]any)
@@ -448,7 +449,10 @@ func toolsCallHandler(ctx context.Context, id jsonrpc.RequestId, g group.Group, 
 	return jsonrpc.JSONRPCResponse{
 		Jsonrpc: jsonrpc.JSONRPC_VERSION,
 		Id:      id,
-		Result:  CallToolResult{Content: content},
+		Result: CallToolResult{
+			Result:  jsonrpc.Result{Meta: resultMeta},
+			Content: content,
+		},
 	}, nil
 }
 
