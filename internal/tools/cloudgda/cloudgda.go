@@ -116,6 +116,10 @@ type Config struct {
 	Location          string             `yaml:"location" validate:"required"`
 	Context           *QueryDataContext  `yaml:"context" validate:"required"`
 	GenerationOptions *GenerationOptions `yaml:"generationOptions,omitempty"`
+	// PSVParameters declares tool parameters whose values are sent as Parameterized Secure View
+	// parameters (context.parameterizedSecureViewParameters) on each request, e.g. a user id bound via
+	// authServices or URL parameter binding so the model never sees or chooses it.
+	PSVParameters parameters.Parameters `yaml:"psvParameters,omitempty"`
 }
 
 // validate interface
@@ -135,6 +139,12 @@ func (cfg Config) Initialize(context.Context) (tools.Tool, error) {
 	allParameters := parameters.Parameters{
 		parameters.NewStringParameter("query", "A natural language formulation of a database query.", parameters.WithStringRequired(true)),
 	}
+	for _, p := range cfg.PSVParameters {
+		if p.GetName() == "query" {
+			return nil, fmt.Errorf("psvParameters for tool %q cannot be named \"query\"", cfg.Name)
+		}
+	}
+	allParameters = append(allParameters, cfg.PSVParameters...)
 	// The input and outputs are for tool guidance, usage guidance is for multi-turn interaction.
 	guidance := Guidance
 	cfg.Description += "\n\n" + guidance
@@ -203,6 +213,25 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 
 	if t.Cfg.Context != nil {
 		req.Context = t.Cfg.Context.QueryDataContext
+	}
+	if len(t.Cfg.PSVParameters) > 0 {
+		// Clone so per-request values never leak into the shared tool config.
+		qctx := &geminidataanalyticspb.QueryDataContext{}
+		if req.Context != nil {
+			qctx = proto.Clone(req.Context).(*geminidataanalyticspb.QueryDataContext)
+		}
+		if qctx.ParameterizedSecureViewParameters == nil {
+			qctx.ParameterizedSecureViewParameters = &geminidataanalyticspb.ParameterizedSecureViewParameters{}
+		}
+		for _, p := range t.Cfg.PSVParameters {
+			v, ok := paramsMap[p.GetName()]
+			if !ok || v == nil {
+				return nil, util.NewAgentError(fmt.Sprintf("parameter %q is required", p.GetName()), nil)
+			}
+			qctx.ParameterizedSecureViewParameters.Parameters = append(qctx.ParameterizedSecureViewParameters.Parameters,
+				&geminidataanalyticspb.ParameterizedSecureViewParameters_Parameter{Key: p.GetName(), Value: fmt.Sprint(v)})
+		}
+		req.Context = qctx
 	}
 
 	if t.Cfg.GenerationOptions != nil {

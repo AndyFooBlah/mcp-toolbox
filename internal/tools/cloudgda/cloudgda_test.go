@@ -124,6 +124,7 @@ type fakeSource struct {
 	expectedQuery  string
 	expectedParent string
 	response       *geminidataanalyticspb.QueryDataResponse
+	gotRequest     *geminidataanalyticspb.QueryDataRequest
 }
 
 func (f *fakeSource) GetProjectID() string {
@@ -157,6 +158,7 @@ func (f *fakeSource) RunQuery(ctx context.Context, token string, req *geminidata
 	if req.Parent != f.expectedParent {
 		return nil, fmt.Errorf("unexpected parent: got %q, want %q", req.Parent, f.expectedParent)
 	}
+	f.gotRequest = req
 	// Basic validation of context/options could be added here if needed,
 	// but the test case mainly checks if they are passed correctly via successful invocation.
 
@@ -335,5 +337,54 @@ func TestInvokeReturnsUsageAndDebugInfoAsMeta(t *testing.T) {
 	}
 	if upstream.GetTokenUsage() == nil || upstream.GetPipelineDebugInfo() == nil {
 		t.Errorf("upstream response must not be mutated")
+	}
+}
+
+func TestInvokeForwardsPSVParameters(t *testing.T) {
+	t.Parallel()
+
+	static := &geminidataanalyticspb.QueryDataContext{
+		ParameterizedSecureViewParameters: &geminidataanalyticspb.ParameterizedSecureViewParameters{
+			Parameters: []*geminidataanalyticspb.ParameterizedSecureViewParameters_Parameter{{Key: "tenant", Value: "acme"}},
+		},
+	}
+	fake := &fakeSource{projectID: "p", expectedQuery: "my showings", expectedParent: "projects/p/locations/us-central1",
+		response: &geminidataanalyticspb.QueryDataResponse{GeneratedQuery: "SELECT 1;"}}
+	toolCfg := cloudgdatool.Config{
+		ConfigBase:    tools.ConfigBase{Name: "q", Description: "d"},
+		Type:          "cloud-gemini-data-analytics-query",
+		Source:        "s",
+		Location:      "us-central1",
+		Context:       &cloudgdatool.QueryDataContext{QueryDataContext: static},
+		PSVParameters: parameters.Parameters{parameters.NewIntParameter("client_id", "The signed-in client.")},
+	}
+	tool, err := toolCfg.Initialize(context.Background())
+	if err != nil {
+		t.Fatalf("failed to initialize tool: %v", err)
+	}
+	ps, err := tool.GetParameters(fake)
+	if err != nil {
+		t.Fatalf("GetParameters: %v", err)
+	}
+	if len(ps) != 2 {
+		t.Fatalf("expected query + client_id parameters, got %d", len(ps))
+	}
+	ctx := testutils.ContextWithUserAgent(context.Background(), "test-user-agent")
+	params := parameters.ParamValues{{Name: "query", Value: "my showings"}, {Name: "client_id", Value: 17}}
+	if _, err := tool.Invoke(ctx, fake, params, ""); err != nil {
+		t.Fatalf("tool invocation failed: %v", err)
+	}
+	got := fake.gotRequest.GetContext().GetParameterizedSecureViewParameters().GetParameters()
+	want := map[string]string{"tenant": "acme", "client_id": "17"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d PSV parameters, got %v", len(want), got)
+	}
+	for _, p := range got {
+		if want[p.GetKey()] != p.GetValue() {
+			t.Errorf("PSV parameter %q = %q, want %q", p.GetKey(), p.GetValue(), want[p.GetKey()])
+		}
+	}
+	if n := len(static.GetParameterizedSecureViewParameters().GetParameters()); n != 1 {
+		t.Errorf("static config was mutated: %d PSV parameters", n)
 	}
 }
