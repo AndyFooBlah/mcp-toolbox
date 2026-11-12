@@ -219,3 +219,92 @@ type capStub struct {
 
 func (c capStub) GetMaxRows() *int          { return c.maxRows }
 func (c capStub) GetMaxResponseBytes() *int { return c.maxBytes }
+
+// TestCapResultLimitedRows covers results a source already cut short. The
+// notice must report the real total, fire even when no cap is configured, and
+// name whichever limit is tighter.
+func TestCapResultLimitedRows(t *testing.T) {
+	limited := func(returned, total int) LimitedRows {
+		return LimitedRows{Rows: listOf(returned), TotalRows: total, Limit: "maxQueryResultRows"}
+	}
+	tcs := []struct {
+		name     string
+		in       LimitedRows
+		maxRows  int
+		maxBytes int
+		wantRows int
+		want     *Truncation
+	}{
+		{
+			name:     "no caps configured still reports the source limit",
+			in:       limited(5, 1200),
+			wantRows: 5,
+			want:     &Truncation{Truncated: true, AppliedLimit: "maxQueryResultRows", ReturnedRows: 5, TotalRows: 1200},
+		},
+		{
+			name:     "maxRows above the source limit leaves the source limit named",
+			in:       limited(5, 1200),
+			maxRows:  100,
+			wantRows: 5,
+			want:     &Truncation{Truncated: true, AppliedLimit: "maxQueryResultRows", ReturnedRows: 5, TotalRows: 1200},
+		},
+		{
+			name:     "maxRows below the source limit wins and keeps the real total",
+			in:       limited(5, 1200),
+			maxRows:  2,
+			wantRows: 2,
+			want:     &Truncation{Truncated: true, AppliedLimit: "maxRows", ReturnedRows: 2, TotalRows: 1200},
+		},
+		{
+			// Each row marshals to {"id":N} = 8 bytes for single-digit ids.
+			name:     "byte cap on top of the source limit names both",
+			in:       limited(5, 1200),
+			maxBytes: 20,
+			wantRows: 2,
+			want: &Truncation{Truncated: true, AppliedLimit: "maxQueryResultRows,maxResponseBytes",
+				ReturnedRows: 2, TotalRows: 1200, ReturnedBytes: 16, LimitBytes: 20},
+		},
+		{
+			name:     "a byte cap that does not fire adds no byte fields",
+			in:       limited(5, 1200),
+			maxBytes: 4096,
+			wantRows: 5,
+			want:     &Truncation{Truncated: true, AppliedLimit: "maxQueryResultRows", ReturnedRows: 5, TotalRows: 1200},
+		},
+	}
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			got, trunc := CapResult(tc.in, tc.maxRows, tc.maxBytes)
+			rows, ok := got.([]any)
+			if !ok {
+				t.Fatalf("result is %T, want the unwrapped []any", got)
+			}
+			if len(rows) != tc.wantRows {
+				t.Errorf("got %d rows, want %d", len(rows), tc.wantRows)
+			}
+			if !reflect.DeepEqual(trunc, tc.want) {
+				t.Errorf("truncation: got %+v, want %+v", trunc, tc.want)
+			}
+		})
+	}
+}
+
+// TestLimitedRowsMarshalsAsRows pins the fallback for any path that serializes
+// a LimitedRows without CapResult, such as the invoke CLI: the output is the
+// rows alone, the same as a bare list.
+func TestLimitedRowsMarshalsAsRows(t *testing.T) {
+	got, err := json.Marshal(LimitedRows{Rows: listOf(2), TotalRows: 9, Limit: "maxQueryResultRows"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := `[{"id":0},{"id":1}]`; string(got) != want {
+		t.Errorf("got %s, want %s", got, want)
+	}
+	got, err = json.Marshal(LimitedRows{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(got) != "[]" {
+		t.Errorf("empty LimitedRows marshaled to %s, want []", got)
+	}
+}

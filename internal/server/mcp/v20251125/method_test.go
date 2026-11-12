@@ -1300,3 +1300,70 @@ func TestToolsCallHandlerCapsStructuredResult(t *testing.T) {
 		t.Errorf("StructuredContent = %v, want it passed through whole: %v", result.StructuredContent, structured)
 	}
 }
+
+// TestToolsCallHandlerReportsSourceLimit covers a result its source already
+// cut short (tools.LimitedRows): the notice is emitted with the real total
+// even though neither the tool nor the server configures a cap.
+func TestToolsCallHandlerReportsSourceLimit(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	testLogger, err := log.NewStdLogger(os.Stdout, os.Stderr, "info")
+	if err != nil {
+		t.Fatalf("unable to initialize logger: %s", err)
+	}
+	ctxLogger := util.WithLogger(ctx, testLogger)
+
+	cfg := testutils.MockToolConfig{
+		ConfigBase: tools.ConfigBase{Name: "limited_tool"},
+		Type:       "mock-tool",
+		Parameters: parameters.Parameters{},
+	}
+	initialized, err := cfg.Initialize(ctx)
+	if err != nil {
+		t.Fatalf("unable to initialize mock tool: %s", err)
+	}
+	tool := initialized.(testutils.MockTool)
+	tool.InvokeResult = tools.LimitedRows{
+		Rows:      []any{"a", "b"},
+		TotalRows: 12481,
+		Limit:     "maxQueryResultRows",
+	}
+
+	toolsMap, promptsMap, resourcesMap, resourceTemplatesMap, groups := testutils.SetUpPrimitives(t, []testutils.MockTool{tool, testutils.MockTool1}, nil, nil, nil)
+	primitiveMgr := primitives.NewPrimitiveManager(nil, nil, nil, toolsMap, promptsMap, resourcesMap, resourceTemplatesMap, groups)
+
+	body, err := json.Marshal(CallToolRequest{
+		Request: jsonrpc.Request{Method: TOOLS_CALL},
+		Params: struct {
+			Name      string         `json:"name"`
+			Arguments map[string]any `json:"arguments,omitempty"`
+		}{Name: "limited_tool"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error during marshaling: %v", err)
+	}
+
+	got, err := toolsCallHandler(ctxLogger, dummyID, mustGroup(t, primitiveMgr), primitiveMgr, body, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp, ok := got.(jsonrpc.JSONRPCResponse)
+	if !ok {
+		t.Fatalf("unexpected response type %T", got)
+	}
+	result, ok := resp.Result.(CallToolResult)
+	if !ok {
+		t.Fatalf("unexpected result type %T", resp.Result)
+	}
+
+	if len(result.Content) != 3 {
+		t.Fatalf("got %d content items, want two rows and the notice: %v", len(result.Content), result.Content)
+	}
+	if result.Content[0].Text != `"a"` || result.Content[1].Text != `"b"` {
+		t.Errorf("rows changed: %v", result.Content[:2])
+	}
+	want := `{"truncation":{"truncated":true,"appliedLimit":"maxQueryResultRows","returnedRows":2,"totalRows":12481}}`
+	if result.Content[2].Text != want {
+		t.Errorf("notice = %s, want %s", result.Content[2].Text, want)
+	}
+}

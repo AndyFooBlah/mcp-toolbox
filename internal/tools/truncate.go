@@ -27,14 +27,42 @@ import (
 type Truncation struct {
 	Truncated bool `json:"truncated"`
 	// AppliedLimit names the cap(s) that fired: "maxRows",
-	// "maxResponseBytes", or "maxRows,maxResponseBytes".
+	// "maxResponseBytes", a source's own limit such as
+	// "maxQueryResultRows", or several joined by commas.
 	AppliedLimit string `json:"appliedLimit"`
-	// ReturnedRows/TotalRows are set for list-shaped results.
+	// ReturnedRows/TotalRows are set for list-shaped results. TotalRows is
+	// the size of the full result where that is known, which for a
+	// LimitedRows result is the count its source reported.
 	ReturnedRows int `json:"returnedRows,omitempty"`
 	TotalRows    int `json:"totalRows,omitempty"`
 	// ReturnedBytes/LimitBytes are set when the byte cap fired.
 	ReturnedBytes int `json:"returnedBytes,omitempty"`
 	LimitBytes    int `json:"limitBytes,omitempty"`
+}
+
+// LimitedRows is a list result that its source already cut short under a
+// limit of its own, before any result cap ran. A source returns it instead of
+// a bare []any so the truncation notice can report the real size of the
+// result and name the limit that fired. Without it a source-level limit is
+// invisible: the caller gets a short list and no sign that rows are missing.
+//
+// CapResult unwraps it. Anything that serializes it without going through
+// CapResult gets the rows alone, the same output as a bare []any.
+type LimitedRows struct {
+	Rows []any
+	// TotalRows is how many rows the full result has.
+	TotalRows int
+	// Limit names the source setting that cut the result, as the user
+	// writes it in configuration (for example "maxQueryResultRows").
+	Limit string
+}
+
+// MarshalJSON renders the rows alone.
+func (l LimitedRows) MarshalJSON() ([]byte, error) {
+	if l.Rows == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(l.Rows)
 }
 
 // CapDeclarer is the view of a tool needed to resolve its effective caps.
@@ -74,13 +102,21 @@ func CapResultForTool(t CapDeclarer, result any, defaultRows, defaultBytes int) 
 // serialized form is cut at a UTF-8 boundary and returned as a string. A zero
 // cap means unlimited. The returned Truncation is nil when nothing was
 // dropped, so the uncapped path stays allocation-free.
+//
+// A LimitedRows result is always unwrapped to its rows and always carries a
+// notice, caps or no caps, because its source already dropped rows. The
+// smaller limit wins: a maxRows below the source's limit cuts further and is
+// the one named, otherwise the source's limit is.
 func CapResult(result any, maxRows, maxBytes int) (any, *Truncation) {
+	if limited, ok := result.(LimitedRows); ok {
+		return capListResult(limited.Rows, limited.TotalRows, limited.Limit, maxRows, maxBytes)
+	}
 	if maxRows <= 0 && maxBytes <= 0 {
 		return result, nil
 	}
 
 	if rows, ok := result.([]any); ok {
-		return capListResult(rows, maxRows, maxBytes)
+		return capListResult(rows, len(rows), "", maxRows, maxBytes)
 	}
 	if maxBytes <= 0 {
 		return result, nil
@@ -103,16 +139,23 @@ func CapResult(result any, maxRows, maxBytes int) (any, *Truncation) {
 	}
 }
 
-func capListResult(rows []any, maxRows, maxBytes int) (any, *Truncation) {
-	totalRows := len(rows)
+// capListResult caps rows. totalRows is the size of the full result, and
+// sourceLimit names a limit the source already applied to get from totalRows
+// down to rows ("" when the source applied none).
+func capListResult(rows []any, totalRows int, sourceLimit string, maxRows, maxBytes int) (any, *Truncation) {
 	applied := ""
+	if sourceLimit != "" && totalRows > len(rows) {
+		applied = sourceLimit
+	}
 
 	if maxRows > 0 && len(rows) > maxRows {
 		rows = rows[:maxRows]
+		// maxRows is the tighter limit, so it replaces the source's.
 		applied = "maxRows"
 	}
 
 	var returnedBytes int
+	bytesFired := false
 	if maxBytes > 0 {
 		// Byte budget counts each element's serialized JSON, which is what
 		// both response surfaces render (MCP emits one text item per element).
@@ -137,6 +180,7 @@ func capListResult(rows []any, maxRows, maxBytes int) (any, *Truncation) {
 				applied = "maxResponseBytes"
 			}
 			returnedBytes = size
+			bytesFired = true
 		}
 	}
 
@@ -149,7 +193,7 @@ func capListResult(rows []any, maxRows, maxBytes int) (any, *Truncation) {
 		ReturnedRows: len(rows),
 		TotalRows:    totalRows,
 	}
-	if returnedBytes > 0 || applied != "maxRows" {
+	if bytesFired {
 		t.ReturnedBytes = returnedBytes
 		t.LimitBytes = maxBytes
 	}

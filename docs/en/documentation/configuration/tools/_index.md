@@ -695,6 +695,22 @@ controls for that, such as BigQuery's `maxQueryResultRows` and
 `maximumBytesBilled`, which are enforced while the query runs.
 {{< /notice >}}
 
+### Source-level limits
+
+Some sources limit results themselves. BigQuery stops reading at
+`maxQueryResultRows` (50 by default) before any cap here runs. When that limit
+cuts a result short, the response carries the same truncation notice, naming
+the source's limit and reporting the real size of the result:
+
+```json
+{"truncation": {"truncated": true, "appliedLimit": "maxQueryResultRows", "returnedRows": 50, "totalRows": 12481}}
+```
+
+The notice is sent whether or not `maxRows` is set. The tighter limit applies:
+a `maxRows` below the source's limit cuts the result further and is the one
+named, while a `maxRows` above it has no effect, because the rows beyond the
+source's limit were never read.
+
 ## Using tools with MCP Toolbox Client SDKs
 
 Once your tools are defined in your configuration, you can retrieve them directly from your application code.

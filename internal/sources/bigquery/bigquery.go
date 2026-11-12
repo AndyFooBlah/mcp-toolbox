@@ -17,6 +17,7 @@ package bigquery
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -660,7 +661,7 @@ func (s *Source) RunSQL(ctx context.Context, bqClient *bigqueryapi.Client, state
 	}
 	// If the query returned any rows, return them directly.
 	if len(out) > 0 {
-		return out, nil
+		return limitedResult(out, it.TotalRows, s.MaxQueryResultRows), nil
 	}
 
 	// This handles the standard case for a SELECT query that successfully
@@ -673,6 +674,23 @@ func (s *Source) RunSQL(ctx context.Context, bqClient *bigqueryapi.Client, state
 	// However, it is also possible that this was a query that was expected to return rows
 	// but returned none, a case that we cannot distinguish here.
 	return "Query executed successfully and returned no content.", nil
+}
+
+// limitedResult returns rows as they are when they are the whole result, and
+// wraps them in tools.LimitedRows when maxQueryResultRows stopped the read
+// short, so the caller is told the result is partial and how large it really
+// is. totalRows is the iterator's count for the full result. BigQuery can
+// report it as zero, in which case nothing is known to be missing and the rows
+// are returned bare.
+func limitedResult(rows []any, totalRows uint64, limit int) any {
+	if limit <= 0 || len(rows) < limit || totalRows <= uint64(len(rows)) {
+		return rows
+	}
+	total := math.MaxInt
+	if totalRows < math.MaxInt {
+		total = int(totalRows)
+	}
+	return tools.LimitedRows{Rows: rows, TotalRows: total, Limit: "maxQueryResultRows"}
 }
 
 // NormalizeValue converts BigQuery specific types to standard JSON-compatible types.
